@@ -1,0 +1,5 @@
+musextract (0.1.0-0) any; urgency=medium
+
+  * New-style debian pytools packaging for clazzes.org
+
+ -- Wolfgang Glas <wolfgang.glas@iteg.at>  Sun, 30 Apr 2017 20:20:40 +0200

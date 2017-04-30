@@ -1,0 +1,18 @@
+Source: musextract
+Section: devel
+Priority: extra
+Maintainer: Wolfgang Glas <wolfgang.glas@iteg.at>
+Build-Depends: cdbs, debhelper (>= 9), dh-python, python3-all, python3-all-dbg, python3-setuptools, python3-clazzes-tools
+XBCS-PBA-Category: pytools
+XBCS-PBA-Generation: 1
+XBCS-PBA-Distributions: any
+XBCS-PBA-Repositories: deb.clazzes.org
+
+Package: python3-musextract
+Architecture: all
+Priority: extra
+Depends: python3-clazzes-tools,
+    ${python3:Depends},
+    ${misc:Depends},
+	${shlibs:Depends}
+Description: Lyrics extractor for musescore files.
