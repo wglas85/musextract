@@ -8,6 +8,8 @@ from zipfile import ZipFile
 import logging
 from xml.dom import pulldom
 from _collections import defaultdict
+import io
+from _pyio import IOBase
 
 log = logging.getLogger(__name__)
 
@@ -162,69 +164,108 @@ def _write_rest_measures(rest_measures,out):
     
     return 0
 
-def parse_staff(doc,out):
+class MultiStringIO(IOBase):
     
-    level = 1
-    
-    rest_measures = 0
-    measure_count = 0
-    last_syllabic = "unknown"
-    pending_break = False
-    
-    for event, node in doc:
-        if event == pulldom.START_ELEMENT:
-
-            if level == 2 and node.tagName == "Rest":
-                rest_measures += parse_rest(doc,out)
-                pending_break = True
-                
-            elif level == 3 and node.tagName == "Lyrics":
-                
-                if pending_break:
-                    print("",file=out)
-                    pending_break = False
-                
-                if last_syllabic == "middle" or last_syllabic == "begin":
-                    out.write("-")
-                
-                last_syllabic  = parse_lyrics(doc,out)
-
-                if last_syllabic == "end" or last_syllabic is None:
-                    out.write(" ")
-
-            else:
-                if level == 1 and node.tagName == "Measure":
-    
-                    rest_measures = _write_rest_measures(rest_measures,out)
-    
-                    if measure_count == 0:
-                        out.write(BAR_BEGIN)
-                    else:
-                        out.write(BAR)
-                    
-                    measure_count +=1    
-                
-                if log.getEffectiveLevel() <= logging.DEBUG and level < 3:
-                    log.debug("STAFF: %sGot <%s>."%(" "*level,node.tagName))
-                level += 1
+    def __init__(self,nstreams):
         
-        elif event == pulldom.END_ELEMENT:
-            
-            level -= 1
-
-            if log.getEffectiveLevel() <= logging.DEBUG and level < 3:
-                log.debug("STAFF: %sGot </%s>."%(" "*level,node.tagName))
+        super().__init__()
+        self.streams = [ io.StringIO() for i in range(0,nstreams)]  # @UnusedVariable
     
-            if level == 0:
-                
-                _write_rest_measures(rest_measures,out)
-                
-                if measure_count > 0:
-                    print(BAR_END,file=out)
+    def getstream(self,i):
+        return self.streams[i]
+    
+    def write(self,data):
+        for s in self.streams:
+            s.write(data)
+    
+    def close(self):
+        for s in self.streams:
+            try:
+                s.close()
+            except:
+                log.warn("Error closing verse memory buffer.")
 
-                return
+def parse_staff(doc,out,nverses = 1):
+    
+    
+    with MultiStringIO(nverses) as verses:
+        
+        level = 1
+        
+        rest_measures = 0
+        measure_count = 0
+        last_syllabics = ["unknown"] * nverses
+        pending_break = False
+        iverse = 0
+        
+        for event, node in doc:
+            if event == pulldom.START_ELEMENT:
+    
+                if level == 2 and node.tagName == "Rest":
+                    rest_measures += parse_rest(doc,verses)
+                    pending_break = True
+                    
+                elif level == 3 and node.tagName == "Lyrics":
+                    
+                    if iverse < nverses:
+                    
+                        verse = verses.getstream(iverse)
+                        
+                        if pending_break:
+                            print("",file=verse)
+                            pending_break = False
+                        
+                        if last_syllabics[iverse] == "middle" or last_syllabics[iverse] == "begin":
+                            verse.write("-")
+                        
+                        last_syllabics[iverse] = parse_lyrics(doc,verse)
+                        
+                        if last_syllabics[iverse] == "end" or last_syllabics[iverse] is None:
+                            verse.write(" ")
+                    else:
+                        level += 1
+                    
+                    iverse += 1
+    
+                else:
+                    if level == 1 and node.tagName == "Measure":
+        
+                        rest_measures = _write_rest_measures(rest_measures,verses)
+        
+                        if measure_count == 0:
+                            verses.write(BAR_BEGIN)
+                        else:
+                            verses.write(BAR)
+                        
+                        measure_count +=1    
+        
+                    elif level == 2 and node.tagName == "Chord":
+                        iverse = 0
+            
+                    if log.getEffectiveLevel() <= logging.DEBUG and level < 3:
+                        log.debug("STAFF: %sGot <%s>."%(" "*level,node.tagName))
+                    level += 1
+            
+            elif event == pulldom.END_ELEMENT:
+                
+                level -= 1
+    
+                if log.getEffectiveLevel() <= logging.DEBUG and level < 3:
+                    log.debug("STAFF: %sGot </%s>."%(" "*level,node.tagName))
+                
+                if level == 0:
+                    
+                    _write_rest_measures(rest_measures,verses)
+                    
+                    if measure_count > 0:
+                        print(BAR_END,file=verses)
+    
+                    for verse in verses.streams:
+                        out.write(verse.getvalue())
+    
+                    return
 
-def parse_mscx(fh,voices,out):
+def parse_mscx(fh,voices,out,nverses = 1):
     
     doc = pulldom.parse(fh)
     
@@ -248,7 +289,7 @@ def parse_mscx(fh,voices,out):
             elif level == 2 and node.tagName=="Staff" and staff_tracks[node.getAttribute("id")] & voices:
                 
                 log.info("Parsing staff with ID [%s]"%node.getAttribute("id"))
-                parse_staff(doc,out)
+                parse_staff(doc,out,nverses=nverses)
                 
             else:
                 if log.getEffectiveLevel() <= logging.DEBUG and level < 3:
@@ -266,7 +307,7 @@ def parse_mscx(fh,voices,out):
     log.info("Found tracks [%s]"%(tracks,))
 
 
-def parse_mscz(filename,voices,out):
+def parse_mscz(filename,voices,out,nverses = 1):
     
     with ZipFile(filename,'r') as mscz_file:
         
@@ -283,4 +324,4 @@ def parse_mscz(filename,voices,out):
         log.info("Parsing entry [%s] of file [%s]",mscx_entries[0],filename)
         
         with mscz_file.open(mscx_entries[0]) as mscx_file:
-            parse_mscx(mscx_file,voices,out)
+            parse_mscx(mscx_file,voices,out,nverses = nverses)
